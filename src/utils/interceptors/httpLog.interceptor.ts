@@ -9,8 +9,9 @@ import { Observable } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
 import { Request, Response } from 'express';
 import { sanitizePayload } from '../sanitize-payload';
-import { HttpLogsService } from '../../httpLog/httpLog.service';
-import { HttpMethod, HttpLog } from '../../httpLog/domain/httpLog';
+import { QueueService } from '../../queue/queue.service';
+import { WriteHttpLogPayload } from '../../queue/types/http-log-jobs.types';
+import { HttpMethod } from '../../httpLog/domain/httpLog';
 
 const REQUEST_ID_KEY = 'request_id' as const;
 
@@ -23,17 +24,12 @@ export type HttpLogInterceptorOptions = {
   skipPathPrefixes: readonly string[];
 };
 
-type PersistPayload = Omit<
-  HttpLog,
-  'id' | 'createdAt' | 'updatedAt' | 'deletedAt'
->;
-
 @Injectable()
 export class HttpLogInterceptor implements NestInterceptor {
   private readonly logger = new Logger('HttpLog');
 
   constructor(
-    private readonly httpLogsService: HttpLogsService,
+    private readonly queueService: QueueService,
     private readonly options: HttpLogInterceptorOptions,
   ) {}
 
@@ -61,7 +57,7 @@ export class HttpLogInterceptor implements NestInterceptor {
         : req.body;
 
     const base: Omit<
-      PersistPayload,
+      WriteHttpLogPayload,
       'endAt' | 'statusCode' | 'responseTimeMs' | 'responseBody'
     > = {
       requestId,
@@ -69,9 +65,9 @@ export class HttpLogInterceptor implements NestInterceptor {
       orgId: req.user?.organization ?? null,
       clientIp: this.extractClientIp(req),
       headers: headers as Record<string, unknown>,
-      userId: req.user?.id ?? undefined,
-      token: req.headers.authorization ?? undefined,
-      startAt,
+      userId: req.user?.id ?? null,
+      token: req.headers.authorization ?? null,
+      startAt: startAt.toISOString(),
       method: req.method as HttpMethod,
       url: requestPath,
       query: req.query as Record<string, unknown>,
@@ -84,46 +80,41 @@ export class HttpLogInterceptor implements NestInterceptor {
     };
 
     return next.handle().pipe(
-      tap((data) => {
+      tap(() => {
         const res = httpCtx.getResponse<Response>();
         const endAt = new Date();
-        this.persist({
+        const payload: WriteHttpLogPayload = {
           ...base,
-          endAt,
+          endAt: endAt.toISOString(),
           statusCode: res.statusCode,
           responseTimeMs: endAt.getTime() - startAt.getTime(),
-          responseBody: sanitizePayload(data),
-        });
+          responseBody: undefined,
+        };
+        this.queueService.enqueueHttpLog(requestId, payload);
         this.logger.log(
-          this.formatLine(requestId, req.method, requestPath, res.statusCode, endAt.getTime() - startAt.getTime(), req.user?.id),
+          this.formatLine(requestId, req.method, requestPath, res.statusCode, payload.responseTimeMs, req.user?.id),
         );
       }),
       catchError((err) => {
         const endAt = new Date();
         const status = (err as { status?: number }).status ?? 500;
-        this.persist({
+        const payload: WriteHttpLogPayload = {
           ...base,
-          endAt,
+          endAt: endAt.toISOString(),
           statusCode: status,
           responseTimeMs: endAt.getTime() - startAt.getTime(),
           responseBody: {
             message: (err as Error).message,
             stack: (err as Error).stack?.split('\n').slice(0, 3).join('\n'),
           },
-        });
+        };
+        this.queueService.enqueueHttpLog(requestId, payload);
         this.logger.error(
-          this.formatLine(requestId, req.method, requestPath, status, endAt.getTime() - startAt.getTime(), req.user?.id, (err as Error).message),
+          this.formatLine(requestId, req.method, requestPath, status, payload.responseTimeMs, req.user?.id, (err as Error).message),
         );
         throw err;
       }),
     );
-  }
-
-  private persist(payload: PersistPayload): void {
-    // Fire-and-forget: never block the response on DB write.
-    this.httpLogsService.create(payload).catch((err) => {
-      this.logger.warn(`Failed to persist http log: ${(err as Error).message}`);
-    });
   }
 
   private formatLine(

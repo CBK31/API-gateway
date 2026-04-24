@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, Repository } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 import { HttpLogEntity } from '../entities/httpLog.entity';
 import { HttpLogMapper } from '../mappers/httpLog.mapper';
@@ -28,6 +29,16 @@ export class HttpLogsRelationalRepository implements HttpLogRepository {
       this.httpLogRepository.create(persistenceModel),
     );
     return HttpLogMapper.toDomain(saved);
+  }
+
+  async createMany(
+    data: Omit<HttpLog, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>[],
+  ): Promise<void> {
+    if (data.length === 0) return;
+    const entities = data.map((d) => HttpLogMapper.toPersistence(d));
+    await this.httpLogRepository.insert(
+      entities as unknown as QueryDeepPartialEntity<HttpLogEntity>[],
+    );
   }
 
   async findManyWithPagination({

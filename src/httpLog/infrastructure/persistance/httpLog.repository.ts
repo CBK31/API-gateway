@@ -8,6 +8,10 @@ export abstract class HttpLogRepository {
     data: Omit<HttpLog, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>,
   ): Promise<HttpLog>;
 
+  abstract createMany(
+    data: Omit<HttpLog, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>[],
+  ): Promise<void>;
+
   abstract findManyWithPagination({
     filterOptions,
     sortOptions,

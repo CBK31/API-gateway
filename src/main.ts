@@ -9,7 +9,7 @@ import * as swaggerUi from 'swagger-ui-express';
 import { AppModule } from './app.module';
 import { AllConfigType } from './config/config.type';
 import { HttpLogInterceptor } from './utils/interceptors/httpLog.interceptor';
-import { HttpLogsService } from './httpLog/httpLog.service';
+import { QueueService } from './queue/queue.service';
 import { RequestIdInterceptor } from './utils/interceptors/request-id.interceptor';
 import { TransformInterceptor } from './utils/interceptors/transform.interceptor';
 import validationOptions from './utils/validation-options';
@@ -113,7 +113,7 @@ async function bootstrap(): Promise<void> {
   app.useGlobalPipes(new ValidationPipe(validationOptions));
 
   const requestIdInterceptor = new RequestIdInterceptor();
-  const httpLogInterceptor = new HttpLogInterceptor(app.get(HttpLogsService), {
+  const httpLogInterceptor = new HttpLogInterceptor(app.get(QueueService), {
     enabled: parseEnvBoolean(process.env.ENABLE_HTTP_REQUEST_LOGS, true),
     skipPathPrefixes: (
       process.env.HTTP_LOG_SKIP_PATH_PREFIXES ??

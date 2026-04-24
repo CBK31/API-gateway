@@ -8,6 +8,7 @@ import databaseConfig from './database/config/database.config';
 import proxyConfig from './proxy/config/proxy.config';
 import { TypeOrmConfigService } from './database/typeorm-config.service';
 import { AuthModule } from './auth/auth.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { HealthModule } from './health/health.module';
 import { EchoModule } from './echo/echo.module';
 import { HttpLogsModule } from './httpLog/httpLog.module';
@@ -26,6 +27,9 @@ import { ProxyModule } from './proxy/proxy.module';
         new DataSource(options).initialize(),
     }),
     AuthModule,
+    // Rate limiting must be imported AFTER AuthModule so JwtGuard runs first
+    // and populates req.user before the throttler picks the tracker key.
+    RateLimitModule,
     HealthModule,
     EchoModule,
     HttpLogsModule,

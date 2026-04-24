@@ -12,6 +12,7 @@ import { validate } from 'class-validator';
 import { Request } from 'express';
 import { AllConfigType } from '../../config/config.type';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { IS_SOFT_JWT_KEY } from '../decorators/soft-jwt.decorator';
 import { JwtPayloadDto } from '../dto/jwt-payload.dto';
 
 @Injectable()
@@ -29,9 +30,15 @@ export class JwtGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
+    const isSoft = this.reflector.getAllAndOverride<boolean>(IS_SOFT_JWT_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
     const req = context.switchToHttp().getRequest<Request>();
     const authHeader = req.headers.authorization;
     if (!authHeader) {
+      if (isSoft) return true;
       throw new UnauthorizedException('Authorization header not found');
     }
 

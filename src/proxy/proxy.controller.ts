@@ -12,7 +12,7 @@ import { ApiExcludeController } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { firstValueFrom } from 'rxjs';
 import { AllConfigType } from '../config/config.type';
-import { Public } from '../auth/decorators/public.decorator';
+import { SoftJwt } from '../auth/decorators/soft-jwt.decorator';
 
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -38,7 +38,7 @@ const STRIP_RESPONSE_HEADERS = new Set<string>([
 ]);
 
 @ApiExcludeController()
-@Public()
+@SoftJwt()
 @Controller({ version: VERSION_NEUTRAL })
 export class ProxyController {
   private readonly logger = new Logger(ProxyController.name);

@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import axios from 'axios';
 import type { Request, Response } from 'express';
+import * as swaggerUi from 'swagger-ui-express';
 import { AppModule } from './app.module';
 import { AllConfigType } from './config/config.type';
 import { HttpLogInterceptor } from './utils/interceptors/httpLog.interceptor';
@@ -21,6 +22,71 @@ function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean 
   if (normalized === '1' || normalized === 'true') return true;
   if (normalized === '0' || normalized === 'false') return false;
   return fallback;
+}
+
+type OpenApiDoc = Record<string, any>;
+
+function mergeTags(a: OpenApiDoc[] = [], b: OpenApiDoc[] = []): OpenApiDoc[] {
+  const byName = new Map<string, OpenApiDoc>();
+  for (const t of a) if (t?.name) byName.set(t.name, t);
+  for (const t of b) if (t?.name) byName.set(t.name, t);
+  return Array.from(byName.values());
+}
+
+async function buildMergedSpec(
+  gatewaySpec: OpenApiDoc,
+  upstreamBaseUrl: string,
+  port: number,
+  logger: Logger,
+): Promise<OpenApiDoc> {
+  let upstream: OpenApiDoc | null = null;
+  try {
+    const { data } = await axios.get<OpenApiDoc>(
+      `${upstreamBaseUrl.replace(/\/$/, '')}/docs-json`,
+      { timeout: 5000 },
+    );
+    upstream = data;
+  } catch (err) {
+    logger.warn(
+      `Upstream OpenAPI spec unavailable (${(err as Error).message}); serving gateway-only spec`,
+    );
+    return {
+      ...gatewaySpec,
+      servers: [
+        { url: `http://localhost:${port}`, description: 'via API Gateway' },
+      ],
+    };
+  }
+
+  return {
+    openapi: upstream.openapi ?? gatewaySpec.openapi ?? '3.0.0',
+    info: {
+      title: 'API Gateway + Upstream (Wazoo)',
+      description:
+        'All endpoints route through the gateway at ' +
+        `http://localhost:${port}. One Authorize applies everywhere.`,
+      version: gatewaySpec.info?.version ?? '0.1',
+    },
+    servers: [
+      { url: `http://localhost:${port}`, description: 'via API Gateway' },
+    ],
+    tags: mergeTags(upstream.tags ?? [], gatewaySpec.tags ?? []),
+    // Gateway paths win on conflict (they override upstream)
+    paths: { ...(upstream.paths ?? {}), ...(gatewaySpec.paths ?? {}) },
+    components: {
+      ...(upstream.components ?? {}),
+      ...(gatewaySpec.components ?? {}),
+      schemas: {
+        ...(upstream.components?.schemas ?? {}),
+        ...(gatewaySpec.components?.schemas ?? {}),
+      },
+      securitySchemes: {
+        ...(upstream.components?.securitySchemes ?? {}),
+        ...(gatewaySpec.components?.securitySchemes ?? {}),
+      },
+    },
+    security: gatewaySpec.security ?? upstream.security,
+  };
 }
 
 async function bootstrap(): Promise<void> {
@@ -85,52 +151,48 @@ async function bootstrap(): Promise<void> {
     infer: true,
   });
 
-  // Serve Wazoo's OpenAPI spec through the gateway with servers[] rewritten
-  // so "Try it out" calls land on us, not directly on the upstream.
   const expressInstance = app.getHttpAdapter().getInstance();
-  let cachedUpstreamSpec: Record<string, unknown> | null = null;
+  let cachedMergedSpec: Record<string, unknown> | null = null;
   let cachedAt = 0;
 
   expressInstance.get(
-    '/docs-upstream-json',
+    '/docs-json-merged',
     async (_req: Request, res: Response) => {
-      const now = Date.now();
-      if (!cachedUpstreamSpec || now - cachedAt > UPSTREAM_SPEC_TTL_MS) {
-        try {
-          const { data } = await axios.get<Record<string, unknown>>(
-            `${upstreamBaseUrl.replace(/\/$/, '')}/docs-json`,
-            { timeout: 5000 },
-          );
-          data.servers = [
-            {
-              url: `http://localhost:${port}`,
-              description: 'via API Gateway',
-            },
-          ];
-          cachedUpstreamSpec = data;
-          cachedAt = now;
-        } catch (err) {
-          return res.status(502).json({
-            status: 'error',
-            message: 'Upstream OpenAPI spec unavailable',
-            detail: (err as Error).message,
-          });
-        }
+      if (
+        !cachedMergedSpec ||
+        Date.now() - cachedAt > UPSTREAM_SPEC_TTL_MS
+      ) {
+        cachedMergedSpec = await buildMergedSpec(
+          document as unknown as OpenApiDoc,
+          upstreamBaseUrl,
+          port,
+          logger,
+        );
+        cachedAt = Date.now();
       }
-      return res.json(cachedUpstreamSpec);
+      res.json(cachedMergedSpec);
     },
   );
 
-  SwaggerModule.setup('docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      displayRequestDuration: true,
-      urls: [
-        { url: '/docs-json', name: 'Gateway (own routes)' },
-        { url: '/docs-upstream-json', name: 'Upstream (Wazoo) via gateway' },
-      ],
-    },
+  // Also expose the gateway-only spec for debugging
+  expressInstance.get('/docs-json', (_req: Request, res: Response) => {
+    res.json(document);
   });
+
+  // Mount Swagger UI manually at /docs and point it to the merged spec URL.
+  // We bypass SwaggerModule.setup() because it embeds the gateway-only spec
+  // inline, which Swagger UI prefers over any URL we set.
+  expressInstance.use(
+    '/docs',
+    swaggerUi.serve,
+    swaggerUi.setup(undefined, {
+      swaggerOptions: {
+        url: '/docs-json-merged',
+        persistAuthorization: true,
+        displayRequestDuration: true,
+      },
+    }),
+  );
 
   await app.listen(port);
 

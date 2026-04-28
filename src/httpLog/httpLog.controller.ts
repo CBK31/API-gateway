@@ -32,7 +32,7 @@ export class HttpLogsController {
   ): Promise<InfinityPaginationResultType<HttpLog>> {
     const page = query?.page ?? 1;
     let limit = query?.limit ?? 10;
-    if (limit > 50) limit = 50;
+    if (limit > 500) limit = 500;
 
     return infinityPagination(
       await this.service.findManyWithPagination({

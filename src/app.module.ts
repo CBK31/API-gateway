@@ -14,6 +14,7 @@ import { AiAnalysisModule } from './ai-analysis/ai-analysis.module';
 import { AuthModule } from './auth/auth.module';
 import { QueueModule } from './queue/queue.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { ConfigInfoModule } from './config-info/config-info.module';
 import { HealthModule } from './health/health.module';
 import { EchoModule } from './echo/echo.module';
 import { HttpLogsModule } from './httpLog/httpLog.module';
@@ -50,6 +51,7 @@ import { ProxyModule } from './proxy/proxy.module';
     EchoModule,
     HttpLogsModule,
     AiAnalysisModule,
+    ConfigInfoModule,
     // Catch-all proxy MUST be imported last so explicit gateway routes
     // (health, echo, http-logs, ai-analysis) resolve before the wildcard.
     ProxyModule,
